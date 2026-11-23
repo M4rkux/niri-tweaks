@@ -36,6 +36,8 @@ On that monitor:
   put. This matters when you move a window from a bigger monitor and the app shrinks a few frames
   later. Without it, the window that was already there slides out and back.
 - Fullscreen and maximized windows behave as usual.
+- `center-column` still works: the column stays centered until you press it again (with
+  `toggle-center-column`) or focus another column. Then right-alignment resumes.
 
 It also works globally (in the top-level `layout {}`), but it's mostly useful per output.
 

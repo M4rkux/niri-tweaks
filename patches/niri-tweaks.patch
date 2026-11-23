@@ -60,7 +60,7 @@ index 329b7669..eacbe417 100644
                  default_column_display: Tabbed,
                  gaps: 8.0,
 diff --git a/src/layout/scrolling.rs b/src/layout/scrolling.rs
-index 007bcaf5..359cb381 100644
+index 007bcaf5..7b4be9a1 100644
 --- a/src/layout/scrolling.rs
 +++ b/src/layout/scrolling.rs
 @@ -67,6 +67,10 @@ pub struct ScrollingSpace<W: LayoutElement> {
@@ -82,7 +82,7 @@ index 007bcaf5..359cb381 100644
              closing_windows: Vec::new(),
              view_size,
              working_area,
-@@ -542,6 +547,38 @@ impl<W: LayoutElement> ScrollingSpace<W> {
+@@ -542,6 +547,47 @@ impl<W: LayoutElement> ScrollingSpace<W> {
              || (self.options.layout.always_center_single_column && self.columns.len() <= 1)
      }
  
@@ -95,6 +95,15 @@ index 007bcaf5..359cb381 100644
 +    fn compute_new_view_offset_right_aligned(&self, idx: usize) -> Option<f64> {
 +        if !self.options.layout.align_columns_right || self.columns.is_empty() {
 +            return None;
++        }
++
++        // The user centered this column with center-column: leave it centered until they press
++        // it again or focus another column.
++        if let Some((id, _)) = &self.view_offset_before_center {
++            let col = &self.columns[idx];
++            if col.tiles[col.active_tile_idx].window().id() == id {
++                return None;
++            }
 +        }
 +
 +        if self
@@ -121,7 +130,7 @@ index 007bcaf5..359cb381 100644
      fn compute_new_view_offset_fit(
          &self,
          target_x: Option<f64>,
-@@ -623,6 +660,10 @@ impl<W: LayoutElement> ScrollingSpace<W> {
+@@ -623,6 +669,10 @@ impl<W: LayoutElement> ScrollingSpace<W> {
          idx: usize,
          prev_idx: Option<usize>,
      ) -> f64 {
@@ -132,7 +141,15 @@ index 007bcaf5..359cb381 100644
          if self.is_centering_focused_column() {
              return self.compute_new_view_offset_for_column_centered(target_x, idx);
          }
-@@ -955,7 +996,12 @@ impl<W: LayoutElement> ScrollingSpace<W> {
+@@ -795,6 +845,7 @@ impl<W: LayoutElement> ScrollingSpace<W> {
+             self.activate_prev_column_on_removal = None;
+             self.view_offset_to_restore = None;
+             self.interactive_resize = None;
++            self.view_offset_before_center = None;
+         }
+     }
+ 
+@@ -955,7 +1006,12 @@ impl<W: LayoutElement> ScrollingSpace<W> {
              .iter()
              .position(|col| col.contains(right_of))
              .unwrap();
@@ -146,7 +163,7 @@ index 007bcaf5..359cb381 100644
  
          self.add_tile(Some(col_idx), tile, activate, width, is_full_width, None);
      }
-@@ -972,6 +1018,9 @@ impl<W: LayoutElement> ScrollingSpace<W> {
+@@ -972,6 +1028,9 @@ impl<W: LayoutElement> ScrollingSpace<W> {
          let idx = idx.unwrap_or_else(|| {
              if was_empty {
                  0
@@ -156,7 +173,7 @@ index 007bcaf5..359cb381 100644
              } else {
                  self.active_column_idx + 1
              }
-@@ -1099,7 +1148,11 @@ impl<W: LayoutElement> ScrollingSpace<W> {
+@@ -1099,7 +1158,11 @@ impl<W: LayoutElement> ScrollingSpace<W> {
  
          // If one window is left, reset its weight to 1.
          if column.data.len() == 1 {
@@ -169,7 +186,7 @@ index 007bcaf5..359cb381 100644
                  *weight = 1.;
              }
          }
-@@ -1242,6 +1295,16 @@ impl<W: LayoutElement> ScrollingSpace<W> {
+@@ -1242,6 +1305,16 @@ impl<W: LayoutElement> ScrollingSpace<W> {
              );
          }
  
@@ -186,7 +203,7 @@ index 007bcaf5..359cb381 100644
          column
      }
  
-@@ -1279,8 +1342,18 @@ impl<W: LayoutElement> ScrollingSpace<W> {
+@@ -1279,8 +1352,18 @@ impl<W: LayoutElement> ScrollingSpace<W> {
  
          // Move other columns in tandem with resizing.
          let ongoing_resize_anim = column.tiles[tile_idx].resize_animation().is_some();
@@ -206,7 +223,7 @@ index 007bcaf5..359cb381 100644
                  for col in &mut self.columns[col_idx + 1..] {
                      // If there's a resize animation on the tile (that may have just started in
                      // column.update_window()), then the apparent size change is smooth with no
-@@ -1320,6 +1393,12 @@ impl<W: LayoutElement> ScrollingSpace<W> {
+@@ -1320,6 +1403,12 @@ impl<W: LayoutElement> ScrollingSpace<W> {
                          col.offset_move_anim_current(-offset);
                      }
                  }
@@ -219,7 +236,7 @@ index 007bcaf5..359cb381 100644
              }
          }
  
-@@ -1349,16 +1428,19 @@ impl<W: LayoutElement> ScrollingSpace<W> {
+@@ -1349,16 +1438,19 @@ impl<W: LayoutElement> ScrollingSpace<W> {
                  let centered = self.is_centering_focused_column();
  
                  let width = self.data[col_idx].width;
@@ -249,7 +266,7 @@ index 007bcaf5..359cb381 100644
  
                  self.view_offset.offset(offset);
              }
-@@ -1404,6 +1486,23 @@ impl<W: LayoutElement> ScrollingSpace<W> {
+@@ -1404,6 +1496,23 @@ impl<W: LayoutElement> ScrollingSpace<W> {
                  // resizing windows not look janky.
                  self.animate_view_offset_to_column_with_config(None, col_idx, None, config);
              }
@@ -273,20 +290,23 @@ index 007bcaf5..359cb381 100644
          }
      }
  
-@@ -2201,6 +2300,41 @@ impl<W: LayoutElement> ScrollingSpace<W> {
+@@ -2201,6 +2310,48 @@ impl<W: LayoutElement> ScrollingSpace<W> {
              return;
          }
  
-+        if self.options.layout.toggle_center_column {
++        let toggle = self.options.layout.toggle_center_column;
++        if toggle || self.options.layout.align_columns_right {
 +            let col = &self.columns[self.active_column_idx];
 +            let active = col.tiles[col.active_tile_idx].window().id().clone();
 +            let centered =
 +                self.compute_new_view_offset_for_column_centered(None, self.active_column_idx);
 +            let is_centered = (self.view_offset.target() - centered).abs() < 1.;
++            let prev = self.view_offset_before_center.take();
 +
-+            match self.view_offset_before_center.take() {
-+                // Pressed again while still centered on the same window: go back.
-+                Some((id, prev_offset)) if is_centered && id == active => {
++            match prev {
++                // toggle-center-column: pressed again while still centered on the same window, so
++                // go back to where the view was.
++                Some((id, prev_offset)) if toggle && is_centered && id == active => {
 +                    self.animate_view_offset_with_config(
 +                        self.active_column_idx,
 +                        prev_offset,
@@ -296,10 +316,14 @@ index 007bcaf5..359cb381 100644
 +                    cancel_resize_for_column(&mut self.interactive_resize, col);
 +                    return;
 +                }
++                // Already centered on this window: keep what we had.
++                Some((id, prev_offset)) if is_centered && id == active => {
++                    self.view_offset_before_center = Some((id, prev_offset));
++                }
++                // Remember where to go back to. This also stops align-columns-right from pulling
++                // the column back to the right while it's centered.
 +                _ => {
-+                    if !is_centered {
-+                        self.view_offset_before_center = Some((active, self.view_offset.target()));
-+                    }
++                    self.view_offset_before_center = Some((active, self.view_offset.target()));
 +                }
 +            }
 +        }
@@ -315,7 +339,7 @@ index 007bcaf5..359cb381 100644
          self.animate_view_offset_to_column_centered(
              None,
              self.active_column_idx,
-@@ -2230,7 +2364,7 @@ impl<W: LayoutElement> ScrollingSpace<W> {
+@@ -2230,7 +2381,7 @@ impl<W: LayoutElement> ScrollingSpace<W> {
              return;
          }
  
@@ -361,10 +385,10 @@ index 31265dd9..5c11b956 100644
              border,
 diff --git a/src/layout/tests/align_right.rs b/src/layout/tests/align_right.rs
 new file mode 100644
-index 00000000..36f9ed6b
+index 00000000..c28ca51f
 --- /dev/null
 +++ b/src/layout/tests/align_right.rs
-@@ -0,0 +1,168 @@
+@@ -0,0 +1,253 @@
 +use std::fmt::Write as _;
 +
 +use super::*;
@@ -532,6 +556,91 @@ index 00000000..36f9ed6b
 +    }
 +
 +    assert_eq!(tile_xs(&mut layout), "1: x=480 w=160\n2: x=320 w=160\n");
++}
++
++fn narrow_right_aligned(toggle: bool) -> Layout<TestWindow> {
++    let mut options = Options::default();
++    options.layout.gaps = 0.;
++    options.layout.align_columns_right = true;
++    options.layout.toggle_center_column = toggle;
++    check_ops_with_options(
++        options,
++        [
++            Op::AddOutput(1),
++            add(1),
++            Op::SetColumnWidth(SizeChange::SetProportion(25.)),
++            Op::Communicate(1),
++            add(2),
++            Op::SetColumnWidth(SizeChange::SetProportion(25.)),
++            Op::Communicate(2),
++            Op::CompleteAnimations,
++        ],
++    )
++}
++
++fn x(layout: &mut Layout<TestWindow>, id: usize) -> f64 {
++    check_ops_on_layout(layout, [Op::CompleteAnimations]);
++    let ws = layout.active_workspace().unwrap();
++    ws.tiles_with_render_positions()
++        .find(|(tile, _, _)| *tile.window().id() == id)
++        .map(|(_, pos, _)| pos.x)
++        .unwrap()
++}
++
++/// A window update that doesn't change the width (e.g. the client commits a new height).
++fn nudge(layout: &mut Layout<TestWindow>, id: usize) {
++    check_ops_on_layout(
++        layout,
++        [
++            Op::SetForcedSize {
++                id,
++                size: Some(Size::new(320, 300)),
++            },
++            Op::Communicate(id),
++        ],
++    );
++}
++
++#[test]
++fn centered_column_stays_centered_with_right_alignment() {
++    let mut layout = narrow_right_aligned(true);
++    // Window 2 is active, to the left of window 1, both right-aligned.
++    let aligned = x(&mut layout, 2);
++    assert_eq!(aligned, 1280. - 640.);
++
++    check_ops_on_layout(&mut layout, [Op::CenterColumn]);
++    let centered = (1280. - 320.) / 2.;
++    assert_eq!(x(&mut layout, 2), centered);
++
++    // Unrelated window updates don't pull it back to the right.
++    nudge(&mut layout, 2);
++    assert_eq!(x(&mut layout, 2), centered);
++    nudge(&mut layout, 1);
++    assert_eq!(x(&mut layout, 2), centered);
++
++    // Pressing again goes back to right-aligned.
++    check_ops_on_layout(&mut layout, [Op::CenterColumn]);
++    assert_eq!(x(&mut layout, 2), aligned);
++}
++
++#[test]
++fn focusing_another_column_resumes_right_alignment() {
++    let mut layout = narrow_right_aligned(true);
++    let aligned = x(&mut layout, 2);
++
++    check_ops_on_layout(&mut layout, [Op::CenterColumn, Op::FocusColumnRight]);
++    // Window 1 is now active; the view returns to right-aligned.
++    assert_eq!(x(&mut layout, 2), aligned);
++}
++
++#[test]
++fn centered_column_stays_centered_without_toggle() {
++    let mut layout = narrow_right_aligned(false);
++    check_ops_on_layout(&mut layout, [Op::CenterColumn]);
++    let centered = (1280. - 320.) / 2.;
++    assert_eq!(x(&mut layout, 2), centered);
++    nudge(&mut layout, 2);
++    assert_eq!(x(&mut layout, 2), centered);
 +}
 diff --git a/src/layout/tests/tweaks.rs b/src/layout/tests/tweaks.rs
 new file mode 100644
