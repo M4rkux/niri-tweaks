@@ -1,0 +1,644 @@
+diff --git a/niri-config/src/layout.rs b/niri-config/src/layout.rs
+index f84528bd..9c13ca4c 100644
+--- a/niri-config/src/layout.rs
++++ b/niri-config/src/layout.rs
+@@ -19,6 +19,9 @@ pub struct Layout {
+     pub preset_window_heights: Vec<PresetSize>,
+     pub center_focused_column: CenterFocusedColumn,
+     pub always_center_single_column: bool,
++    pub align_columns_right: bool,
++    pub reset_height_when_alone: bool,
++    pub toggle_center_column: bool,
+     pub empty_workspace_above_first: bool,
+     pub default_column_display: ColumnDisplay,
+     pub gaps: f64,
+@@ -42,6 +45,9 @@ impl Default for Layout {
+             default_column_width: Some(PresetSize::Proportion(0.5)),
+             center_focused_column: CenterFocusedColumn::Never,
+             always_center_single_column: false,
++            align_columns_right: false,
++            reset_height_when_alone: false,
++            toggle_center_column: false,
+             empty_workspace_above_first: false,
+             default_column_display: ColumnDisplay::Normal,
+             gaps: 16.,
+@@ -66,6 +72,9 @@ impl MergeWith<LayoutPart> for Layout {
+             tab_indicator,
+             insert_hint,
+             always_center_single_column,
++            align_columns_right,
++            reset_height_when_alone,
++            toggle_center_column,
+             empty_workspace_above_first,
+             gaps,
+         );
+@@ -117,6 +126,12 @@ pub struct LayoutPart {
+     #[knuffel(child)]
+     pub always_center_single_column: Option<Flag>,
+     #[knuffel(child)]
++    pub align_columns_right: Option<Flag>,
++    #[knuffel(child)]
++    pub reset_height_when_alone: Option<Flag>,
++    #[knuffel(child)]
++    pub toggle_center_column: Option<Flag>,
++    #[knuffel(child)]
+     pub empty_workspace_above_first: Option<Flag>,
+     #[knuffel(child, unwrap(argument, str))]
+     pub default_column_display: Option<ColumnDisplay>,
+diff --git a/niri-config/src/lib.rs b/niri-config/src/lib.rs
+index 329b7669..eacbe417 100644
+--- a/niri-config/src/lib.rs
++++ b/niri-config/src/lib.rs
+@@ -1448,6 +1448,9 @@ mod tests {
+                 ],
+                 center_focused_column: OnOverflow,
+                 always_center_single_column: false,
++                align_columns_right: false,
++                reset_height_when_alone: false,
++                toggle_center_column: false,
+                 empty_workspace_above_first: false,
+                 default_column_display: Tabbed,
+                 gaps: 8.0,
+diff --git a/src/layout/scrolling.rs b/src/layout/scrolling.rs
+index 007bcaf5..359cb381 100644
+--- a/src/layout/scrolling.rs
++++ b/src/layout/scrolling.rs
+@@ -67,6 +67,10 @@ pub struct ScrollingSpace<W: LayoutElement> {
+     /// View offset to restore after unfullscreening or unmaximizing.
+     view_offset_to_restore: Option<f64>,
+ 
++    /// View offset to go back to when `center-column` is pressed again (toggle-center-column),
++    /// along with the window that was active when it was centered.
++    view_offset_before_center: Option<(W::Id, f64)>,
++
+     /// Windows in the closing animation.
+     closing_windows: Vec<ClosingWindow>,
+ 
+@@ -300,6 +304,7 @@ impl<W: LayoutElement> ScrollingSpace<W> {
+             view_offset: ViewOffset::Static(0.),
+             activate_prev_column_on_removal: None,
+             view_offset_to_restore: None,
++            view_offset_before_center: None,
+             closing_windows: Vec::new(),
+             view_size,
+             working_area,
+@@ -542,6 +547,38 @@ impl<W: LayoutElement> ScrollingSpace<W> {
+             || (self.options.layout.always_center_single_column && self.columns.len() <= 1)
+     }
+ 
++    /// Computes the view offset (relative to column `idx`) that aligns the right edge of the last
++    /// column with the right edge of the working area.
++    ///
++    /// Returns `None` when `align-columns-right` is off, when some column isn't in the normal
++    /// sizing mode, or when the columns don't fit into the working area (in which case the
++    /// regular scrolling logic applies).
++    fn compute_new_view_offset_right_aligned(&self, idx: usize) -> Option<f64> {
++        if !self.options.layout.align_columns_right || self.columns.is_empty() {
++            return None;
++        }
++
++        if self
++            .columns
++            .iter()
++            .any(|col| !col.sizing_mode().is_normal())
++        {
++            return None;
++        }
++
++        let gaps = self.options.layout.gaps;
++        // column_x(len) is one past the last column, including its trailing gap.
++        let right = self.column_x(self.columns.len()) - gaps;
++        let area = self.working_area;
++
++        if right + gaps * 2. > area.size.w {
++            return None;
++        }
++
++        let view_pos = right + gaps - area.size.w - area.loc.x;
++        Some(view_pos - self.column_x(idx))
++    }
++
+     fn compute_new_view_offset_fit(
+         &self,
+         target_x: Option<f64>,
+@@ -623,6 +660,10 @@ impl<W: LayoutElement> ScrollingSpace<W> {
+         idx: usize,
+         prev_idx: Option<usize>,
+     ) -> f64 {
++        if let Some(offset) = self.compute_new_view_offset_right_aligned(idx) {
++            return offset;
++        }
++
+         if self.is_centering_focused_column() {
+             return self.compute_new_view_offset_for_column_centered(target_x, idx);
+         }
+@@ -955,7 +996,12 @@ impl<W: LayoutElement> ScrollingSpace<W> {
+             .iter()
+             .position(|col| col.contains(right_of))
+             .unwrap();
+-        let col_idx = right_of_idx + 1;
++        // Mirrored layout: open next to the window, on the left side.
++        let col_idx = if self.options.layout.align_columns_right {
++            right_of_idx
++        } else {
++            right_of_idx + 1
++        };
+ 
+         self.add_tile(Some(col_idx), tile, activate, width, is_full_width, None);
+     }
+@@ -972,6 +1018,9 @@ impl<W: LayoutElement> ScrollingSpace<W> {
+         let idx = idx.unwrap_or_else(|| {
+             if was_empty {
+                 0
++            } else if self.options.layout.align_columns_right {
++                // Mirrored layout: new columns open to the left of the active one.
++                self.active_column_idx
+             } else {
+                 self.active_column_idx + 1
+             }
+@@ -1099,7 +1148,11 @@ impl<W: LayoutElement> ScrollingSpace<W> {
+ 
+         // If one window is left, reset its weight to 1.
+         if column.data.len() == 1 {
+-            if let WindowHeight::Auto { weight } = &mut column.data[0].height {
++            if self.options.layout.reset_height_when_alone {
++                // The remaining window fills the column again, as part of this same layout
++                // update (rather than keeping a fixed or preset height).
++                column.data[0].height = WindowHeight::auto_1();
++            } else if let WindowHeight::Auto { weight } = &mut column.data[0].height {
+                 *weight = 1.;
+             }
+         }
+@@ -1242,6 +1295,16 @@ impl<W: LayoutElement> ScrollingSpace<W> {
+             );
+         }
+ 
++        // Keep the remaining columns right-aligned.
++        if self.options.layout.align_columns_right && !self.view_offset.is_gesture() {
++            self.animate_view_offset_to_column_with_config(
++                None,
++                self.active_column_idx,
++                None,
++                view_config,
++            );
++        }
++
+         column
+     }
+ 
+@@ -1279,8 +1342,18 @@ impl<W: LayoutElement> ScrollingSpace<W> {
+ 
+         // Move other columns in tandem with resizing.
+         let ongoing_resize_anim = column.tiles[tile_idx].resize_animation().is_some();
++
++        // With right-aligned columns, anchor resizes on the right: columns to the right of the
++        // resized one stay in place, and the resized column grows or shrinks from its left edge.
++        let right_anchored = offset != 0.
++            && self.options.layout.align_columns_right
++            && !self.view_offset.is_gesture()
++            && self
++                .compute_new_view_offset_right_aligned(self.active_column_idx)
++                .is_some();
++
+         if offset != 0. {
+-            if self.active_column_idx <= col_idx {
++            if self.active_column_idx <= col_idx && !right_anchored {
+                 for col in &mut self.columns[col_idx + 1..] {
+                     // If there's a resize animation on the tile (that may have just started in
+                     // column.update_window()), then the apparent size change is smooth with no
+@@ -1320,6 +1393,12 @@ impl<W: LayoutElement> ScrollingSpace<W> {
+                         col.offset_move_anim_current(-offset);
+                     }
+                 }
++
++                // The view is anchored to the active column. If it's at or left of the resized
++                // column, shift the view so that the columns to the right don't move.
++                if right_anchored && self.active_column_idx <= col_idx {
++                    self.view_offset.offset(-offset);
++                }
+             }
+         }
+ 
+@@ -1349,16 +1428,19 @@ impl<W: LayoutElement> ScrollingSpace<W> {
+                 let centered = self.is_centering_focused_column();
+ 
+                 let width = self.data[col_idx].width;
+-                let offset = if centered {
+-                    // FIXME: when view_offset becomes fractional, this can be made additive too.
+-                    let new_offset =
+-                        -(self.working_area.size.w - width) / 2. - self.working_area.loc.x;
+-                    new_offset - self.view_offset.target()
+-                } else if resize.edges.contains(ResizeEdge::LEFT) {
+-                    -offset
+-                } else {
+-                    0.
+-                };
++                let offset =
++                    if let Some(new_offset) = self.compute_new_view_offset_right_aligned(col_idx) {
++                        new_offset - self.view_offset.target()
++                    } else if centered {
++                        // FIXME: when view_offset becomes fractional, this can be made additive too.
++                        let new_offset =
++                            -(self.working_area.size.w - width) / 2. - self.working_area.loc.x;
++                        new_offset - self.view_offset.target()
++                    } else if resize.edges.contains(ResizeEdge::LEFT) {
++                        -offset
++                    } else {
++                        0.
++                    };
+ 
+                 self.view_offset.offset(offset);
+             }
+@@ -1404,6 +1486,23 @@ impl<W: LayoutElement> ScrollingSpace<W> {
+                 // resizing windows not look janky.
+                 self.animate_view_offset_to_column_with_config(None, col_idx, None, config);
+             }
++        } else if offset != 0.
++            && self.options.layout.align_columns_right
++            && self.interactive_resize.is_none()
++            && !self.view_offset.is_gesture()
++        {
++            // A non-active column changed width; keep the columns right-aligned.
++            let config = if ongoing_resize_anim {
++                self.options.animations.window_resize.anim
++            } else {
++                self.options.animations.horizontal_view_movement.0
++            };
++            self.animate_view_offset_to_column_with_config(
++                None,
++                self.active_column_idx,
++                None,
++                config,
++            );
+         }
+     }
+ 
+@@ -2201,6 +2300,41 @@ impl<W: LayoutElement> ScrollingSpace<W> {
+             return;
+         }
+ 
++        if self.options.layout.toggle_center_column {
++            let col = &self.columns[self.active_column_idx];
++            let active = col.tiles[col.active_tile_idx].window().id().clone();
++            let centered =
++                self.compute_new_view_offset_for_column_centered(None, self.active_column_idx);
++            let is_centered = (self.view_offset.target() - centered).abs() < 1.;
++
++            match self.view_offset_before_center.take() {
++                // Pressed again while still centered on the same window: go back.
++                Some((id, prev_offset)) if is_centered && id == active => {
++                    self.animate_view_offset_with_config(
++                        self.active_column_idx,
++                        prev_offset,
++                        self.options.animations.horizontal_view_movement.0,
++                    );
++                    let col = &mut self.columns[self.active_column_idx];
++                    cancel_resize_for_column(&mut self.interactive_resize, col);
++                    return;
++                }
++                _ => {
++                    if !is_centered {
++                        self.view_offset_before_center = Some((active, self.view_offset.target()));
++                    }
++                }
++            }
++        }
++
++        self.center_column_no_toggle();
++    }
++
++    fn center_column_no_toggle(&mut self) {
++        if self.columns.is_empty() {
++            return;
++        }
++
+         self.animate_view_offset_to_column_centered(
+             None,
+             self.active_column_idx,
+@@ -2230,7 +2364,7 @@ impl<W: LayoutElement> ScrollingSpace<W> {
+             return;
+         }
+ 
+-        self.center_column();
++        self.center_column_no_toggle();
+     }
+ 
+     pub fn center_visible_columns(&mut self) {
+diff --git a/src/layout/tests.rs b/src/layout/tests.rs
+index 31265dd9..5c11b956 100644
+--- a/src/layout/tests.rs
++++ b/src/layout/tests.rs
+@@ -13,8 +13,10 @@ use smithay::utils::Rectangle;
+ 
+ use super::*;
+ 
++mod align_right;
+ mod animations;
+ mod fullscreen;
++mod tweaks;
+ 
+ impl<W: LayoutElement> Default for Layout<W> {
+     fn default() -> Self {
+@@ -3887,6 +3889,9 @@ prop_compose! {
+         tab_indicator in prop::option::of(arbitrary_tab_indicator()),
+         center_focused_column in prop::option::of(arbitrary_center_focused_column()),
+         always_center_single_column in prop::option::of(any::<bool>().prop_map(Flag)),
++        align_columns_right in prop::option::of(any::<bool>().prop_map(Flag)),
++        reset_height_when_alone in prop::option::of(any::<bool>().prop_map(Flag)),
++        toggle_center_column in prop::option::of(any::<bool>().prop_map(Flag)),
+         empty_workspace_above_first in prop::option::of(any::<bool>().prop_map(Flag)),
+     ) -> niri_config::LayoutPart {
+         niri_config::LayoutPart {
+@@ -3894,6 +3899,9 @@ prop_compose! {
+             struts,
+             center_focused_column,
+             always_center_single_column,
++            align_columns_right,
++            reset_height_when_alone,
++            toggle_center_column,
+             empty_workspace_above_first,
+             focus_ring,
+             border,
+diff --git a/src/layout/tests/align_right.rs b/src/layout/tests/align_right.rs
+new file mode 100644
+index 00000000..36f9ed6b
+--- /dev/null
++++ b/src/layout/tests/align_right.rs
+@@ -0,0 +1,168 @@
++use std::fmt::Write as _;
++
++use super::*;
++
++fn make_options() -> Options {
++    Options {
++        layout: niri_config::Layout {
++            gaps: 0.0,
++            align_columns_right: true,
++            default_column_width: Some(PresetSize::Proportion(0.25)),
++            ..Default::default()
++        },
++        ..Options::default()
++    }
++}
++
++/// Final (animations completed) X of every tile on the active workspace, by window id.
++fn tile_xs(layout: &mut Layout<TestWindow>) -> String {
++    check_ops_on_layout(layout, [Op::CompleteAnimations]);
++    let mut buf = String::new();
++    let ws = layout.active_workspace().unwrap();
++    let mut tiles: Vec<_> = ws
++        .tiles_with_render_positions()
++        .map(|(tile, pos, _)| (*tile.window().id(), pos.x, tile.tile_size().w))
++        .collect();
++    tiles.sort_by_key(|(id, _, _)| *id);
++    for (id, x, w) in tiles {
++        writeln!(&mut buf, "{id}: x={x:.0} w={w:.0}").unwrap();
++    }
++    buf
++}
++
++fn add(id: usize) -> Op {
++    Op::AddWindow {
++        params: TestWindowParams::new(id),
++    }
++}
++
++#[test]
++fn new_columns_open_on_the_left_and_stay_right_aligned() {
++    let mut layout = check_ops_with_options(make_options(), [Op::AddOutput(1), add(1)]);
++    assert_eq!(tile_xs(&mut layout), "1: x=1180 w=100\n");
++
++    check_ops_on_layout(&mut layout, [add(2), add(3)]);
++    assert_eq!(
++        tile_xs(&mut layout),
++        "1: x=1180 w=100\n2: x=1080 w=100\n3: x=980 w=100\n"
++    );
++
++    // Focusing another output and back doesn't move anything.
++    check_ops_on_layout(
++        &mut layout,
++        [Op::AddOutput(2), Op::FocusOutput(2), Op::FocusOutput(1)],
++    );
++    assert_eq!(
++        tile_xs(&mut layout),
++        "1: x=1180 w=100\n2: x=1080 w=100\n3: x=980 w=100\n"
++    );
++
++    check_ops_on_layout(&mut layout, [Op::CloseWindow(3)]);
++    assert_eq!(tile_xs(&mut layout), "1: x=1180 w=100\n2: x=1080 w=100\n");
++}
++
++#[test]
++fn inactive_column_resize_keeps_right_alignment() {
++    let mut layout =
++        check_ops_with_options(make_options(), [Op::AddOutput(1), add(1), add(2), add(3)]);
++    check_ops_on_layout(
++        &mut layout,
++        [
++            Op::SetForcedSize {
++                id: 1,
++                size: Some(Size::new(200, 100)),
++            },
++            Op::Communicate(1),
++        ],
++    );
++    assert_eq!(
++        tile_xs(&mut layout),
++        "1: x=1080 w=200\n2: x=980 w=100\n3: x=880 w=100\n"
++    );
++}
++
++#[test]
++fn column_moved_from_other_output_opens_on_the_left() {
++    let mut layout = check_ops_with_options(
++        make_options(),
++        [
++            Op::AddOutput(1),
++            add(1),
++            Op::AddOutput(2),
++            Op::FocusOutput(2),
++            add(2),
++        ],
++    );
++    check_ops_on_layout(
++        &mut layout,
++        [Op::MoveColumnToOutput {
++            output_id: 1,
++            target_ws_idx: None,
++            activate: true,
++        }],
++    );
++    assert_eq!(tile_xs(&mut layout), "1: x=1180 w=100\n2: x=1080 w=100\n");
++}
++
++#[test]
++fn resize_after_moving_from_wider_output_is_anchored_on_the_right() {
++    let mut options = Options::default();
++    options.layout.gaps = 0.;
++    let part = niri_config::LayoutPart {
++        align_columns_right: Some(Flag(true)),
++        ..Default::default()
++    };
++    let mut layout = check_ops_with_options(
++        options,
++        [
++            // 640 px wide logical output with right-aligned columns.
++            Op::AddScaledOutput {
++                id: 1,
++                scale: 2.,
++                layout_config: None,
++            },
++            Op::UpdateOutputLayoutConfig {
++                id: 1,
++                layout_config: Some(Box::new(part)),
++            },
++            add(1),
++            Op::SetColumnWidth(SizeChange::SetProportion(25.)),
++            Op::Communicate(1),
++            // 1280 px wide output.
++            Op::AddOutput(2),
++            Op::FocusOutput(2),
++            add(2),
++            Op::SetColumnWidth(SizeChange::SetProportion(25.)),
++            Op::Communicate(2),
++            Op::CompleteAnimations,
++            Op::MoveColumnToOutput {
++                output_id: 1,
++                target_ws_idx: None,
++                activate: true,
++            },
++        ],
++    );
++
++    for frame in 0..12 {
++        if frame == 2 {
++            // The client commits its new, smaller size a bit later.
++            check_ops_on_layout(&mut layout, [Op::Communicate(2)]);
++        }
++
++        let ws = layout.active_workspace().unwrap();
++        for (tile, pos, _) in ws.tiles_with_render_positions() {
++            let right = pos.x + tile.animated_tile_size().w;
++            match tile.window().id() {
++                // The window that was already there never moves.
++                1 => assert_eq!((pos.x, right), (480., 640.), "frame {frame}"),
++                // The moved window shrinks from its left edge.
++                2 => assert_eq!(right.round(), 480., "frame {frame}"),
++                _ => unreachable!(),
++            }
++        }
++
++        check_ops_on_layout(&mut layout, [Op::AdvanceAnimations { msec_delta: 25 }]);
++    }
++
++    assert_eq!(tile_xs(&mut layout), "1: x=480 w=160\n2: x=320 w=160\n");
++}
+diff --git a/src/layout/tests/tweaks.rs b/src/layout/tests/tweaks.rs
+new file mode 100644
+index 00000000..4bfdba75
+--- /dev/null
++++ b/src/layout/tests/tweaks.rs
+@@ -0,0 +1,103 @@
++use super::*;
++
++fn add(id: usize) -> Op {
++    Op::AddWindow {
++        params: TestWindowParams::new(id),
++    }
++}
++
++fn options(f: impl FnOnce(&mut niri_config::Layout)) -> Options {
++    let mut options = Options::default();
++    options.layout.gaps = 0.;
++    f(&mut options.layout);
++    options
++}
++
++fn height_of(layout: &Layout<TestWindow>, id: usize) -> f64 {
++    let ws = layout.active_workspace().unwrap();
++    ws.tiles_with_render_positions()
++        .find(|(tile, _, _)| *tile.window().id() == id)
++        .map(|(tile, _, _)| tile.tile_size().h)
++        .unwrap()
++}
++
++fn x_of(layout: &mut Layout<TestWindow>, id: usize) -> f64 {
++    check_ops_on_layout(layout, [Op::CompleteAnimations]);
++    let ws = layout.active_workspace().unwrap();
++    ws.tiles_with_render_positions()
++        .find(|(tile, _, _)| *tile.window().id() == id)
++        .map(|(_, pos, _)| pos.x)
++        .unwrap()
++}
++
++/// Two stacked windows, window 1 with a fixed height, then window 2 closes.
++fn stacked_then_close(options: Options) -> Layout<TestWindow> {
++    check_ops_with_options(
++        options,
++        [
++            Op::AddOutput(1),
++            add(1),
++            add(2),
++            Op::ConsumeOrExpelWindowLeft { id: None },
++            Op::SetWindowHeight {
++                id: Some(1),
++                change: SizeChange::SetFixed(100),
++            },
++            Op::Communicate(1),
++            Op::Communicate(2),
++            Op::CloseWindow(2),
++            Op::Communicate(1),
++        ],
++    )
++}
++
++#[test]
++fn reset_height_when_alone_fills_column() {
++    let layout = stacked_then_close(options(|l| l.reset_height_when_alone = true));
++    assert_eq!(height_of(&layout, 1), 720.);
++}
++
++#[test]
++fn without_reset_height_when_alone_keeps_fixed_height() {
++    let layout = stacked_then_close(options(|_| ()));
++    assert_eq!(height_of(&layout, 1), 100.);
++}
++
++fn one_narrow_column(options: Options) -> Layout<TestWindow> {
++    check_ops_with_options(
++        options,
++        [
++            Op::AddOutput(1),
++            add(1),
++            Op::SetColumnWidth(SizeChange::SetProportion(25.)),
++            Op::Communicate(1),
++            Op::CompleteAnimations,
++        ],
++    )
++}
++
++#[test]
++fn toggle_center_column_goes_back() {
++    let mut layout = one_narrow_column(options(|l| l.toggle_center_column = true));
++    let start = x_of(&mut layout, 1);
++
++    check_ops_on_layout(&mut layout, [Op::CenterColumn]);
++    let centered = x_of(&mut layout, 1);
++    assert_eq!(centered, (1280. - 320.) / 2.);
++
++    check_ops_on_layout(&mut layout, [Op::CenterColumn]);
++    assert_eq!(x_of(&mut layout, 1), start);
++
++    // And a third press centers again.
++    check_ops_on_layout(&mut layout, [Op::CenterColumn]);
++    assert_eq!(x_of(&mut layout, 1), centered);
++}
++
++#[test]
++fn without_toggle_center_column_stays_centered() {
++    let mut layout = one_narrow_column(options(|_| ()));
++    check_ops_on_layout(&mut layout, [Op::CenterColumn]);
++    let centered = x_of(&mut layout, 1);
++    check_ops_on_layout(&mut layout, [Op::CenterColumn]);
++    assert_eq!(x_of(&mut layout, 1), centered);
++}
