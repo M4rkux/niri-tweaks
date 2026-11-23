@@ -66,9 +66,6 @@ layout {
 }
 ```
 
-(This replaces the `extras/auto-reset-height` daemon, which does the same thing on stock niri by
-watching the IPC event stream and fixing the height after the fact.)
-
 ### 4. Shortcuts: `binds.kdl`
 
 Window-management binds from DankMaterialShell's niri setup: focus/move columns and windows,
