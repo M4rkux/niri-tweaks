@@ -18,7 +18,7 @@ HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PATCH="$HERE/patches/niri-tweaks.patch"
 SRC="${NIRI_SRC:-${XDG_CACHE_HOME:-$HOME/.cache}/niri-tweaks/niri}"
 DEST="/usr/local/bin/niri"
-REPO_URL="https://github.com/YaLTeR/niri.git"
+REPO_URL="https://github.com/niri-wm/niri.git"
 
 die() { echo "error: $*" >&2; exit 1; }
 

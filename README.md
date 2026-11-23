@@ -1,6 +1,6 @@
 # niri-tweaks
 
-A small patch for the [niri](https://github.com/YaLTeR/niri) Wayland compositor that adds three
+A small patch for the [niri](https://github.com/niri-wm/niri) Wayland compositor that adds three
 opt-in layout options.
 
 **Tested with niri `v26.04`** (commit `8ed0da4`). Other versions may work if the patch still
@@ -58,6 +58,12 @@ If you stack windows in a column and give one a fixed or preset height (e.g. wit
 `switch-preset-window-height`), niri keeps that height after the other windows close. The
 survivor then doesn't fill the column. With this option, the last window in a column goes back
 to auto height. This happens in the same layout update as the close, so there's no second jump.
+
+This isn't a niri bug: niri keeps a window's height on purpose, so that something can stay an
+exact size (say, a terminal showing 30 lines). The option trades that for windows that always
+fill their column once they're alone. The same goes for windows that leave a column by being
+expelled or moved. A related upstream discussion is
+[niri-wm/niri#1811](https://github.com/niri-wm/niri/issues/1811).
 
 ```kdl
 layout {
