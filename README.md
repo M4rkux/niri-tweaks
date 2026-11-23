@@ -1,8 +1,7 @@
 # niri-tweaks
 
-A small patch for the [niri](https://github.com/YaLTeR/niri) Wayland compositor, plus a set of
-window-management shortcuts in the style of
-[DankMaterialShell](https://github.com/AvengeMedia/DankMaterialShell).
+A small patch for the [niri](https://github.com/YaLTeR/niri) Wayland compositor that adds three
+opt-in layout options.
 
 **Tested with niri `v26.04`** (commit `8ed0da4`). Other versions may work if the patch still
 applies; `install.sh` tells you if it doesn't.
@@ -42,7 +41,7 @@ It also works globally (in the top-level `layout {}`), but it's mostly useful pe
 
 ### 2. Toggle `center-column`: `toggle-center-column`
 
-By default, `center-column` (`Mod+C` in the shortcuts below) centers the focused column, and
+By default, `center-column` (`Mod+C` in niri's default config) centers the focused column, and
 pressing it again does nothing. With this option, **pressing it again returns the view to where it
 was** before centering. It only goes back if you're still on the same window and the view is still
 centered. Otherwise the press centers again. `center-window` keeps its normal behavior.
@@ -65,14 +64,6 @@ layout {
     reset-height-when-alone
 }
 ```
-
-### 4. Shortcuts: `binds.kdl`
-
-Window-management binds from DankMaterialShell's niri setup: focus/move columns and windows,
-`Mod+Ctrl` focuses monitors, `Mod+Shift+Ctrl` moves columns to monitors, workspaces, and sizing
-(`Mod+R` preset width, `Mod+Shift+R` preset height, `Mod+Ctrl+R` reset height, `Mod+C` center,
-`Mod+±` width, `Mod+Shift+±` height). See [`binds.kdl`](binds.kdl) for the full list. They only
-use niri actions: no app launchers, no shell-specific IPC.
 
 ## Install
 
@@ -122,25 +113,26 @@ the patched build. Your package manager still owns `/usr/bin/niri`, so there's n
 ls -l /proc/$(pidof niri)/exe   # -> /usr/local/bin/niri
 ```
 
-### 3. Turn things on
+### 3. Turn the options on
 
-```sh
-./setup-config.sh
+Add the options you want to your niri config, as shown in [What's included](#whats-included).
+For example:
+
+```kdl
+layout {
+    toggle-center-column
+    reset-height-when-alone
+}
+
+output "HDMI-A-1" {   // your monitor's name, from `niri msg outputs`
+    layout {
+        align-columns-right
+    }
+}
 ```
 
-This script:
-
-- reads the binds already in your config (every `.kdl` under `~/.config/niri`),
-- lists the shortcuts whose keys are free and adds them after one confirmation,
-- **asks key by key** when a shortcut would replace one of yours (`y` replace, `n` keep,
-  `a` replace all, `s` keep all), and skips the ones you already have,
-- offers to enable `toggle-center-column` and `reset-height-when-alone` (only if the patched niri
-  is running),
-- writes everything to `~/.config/niri/niri-tweaks.kdl` and adds `include "niri-tweaks.kdl"` at the
-  end of `config.kdl`. It backs up both files first and rolls back if `niri validate` fails.
-
-Run it again any time to change your answers. `align-columns-right` depends on your monitor
-names, so add it yourself as shown above.
+If you already have a `layout {}` block or an `output` block for that monitor, add the lines to
+the existing block. niri reloads the config when you save. Run `niri validate` to check it.
 
 ## After a niri update
 
@@ -160,8 +152,8 @@ without installing anything. You can stay on the tested version with `./install.
 ./install.sh --uninstall   # removes /usr/local/bin/niri
 ```
 
-Then remove the `include "niri-tweaks.kdl"` line from `config.kdl`. The layout options aren't
-valid on stock niri. Also remove `align-columns-right` if you added it. Log out and back in.
+Then remove the options from your config first, since stock niri doesn't know them and will
+refuse to load it. Log out and back in.
 
 ## Development
 

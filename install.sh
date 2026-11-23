@@ -87,4 +87,4 @@ sudo install -m755 "$BIN" "$DEST"
 
 echo
 echo "Installed: $("$DEST" --version)"
-echo "Log out and back in to start using it. Then run ./setup-config.sh to enable the tweaks."
+echo "Log out and back in to start using it, then enable the options in your config (see README)."
